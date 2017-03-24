@@ -8,6 +8,7 @@ import java.net.URISyntaxException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -957,8 +958,10 @@ public class ApplicationMaster extends CompositeService {
     StringBuilder commandBuilder = new StringBuilder(
         "/soft/mvapich2-2.2/pf/bin/mpiexec.hydra -launcher ssh -hosts ");
     Set<String> hosts = hostToProcNum.keySet();
+    List<String> sortedHosts = new ArrayList<String>(hosts);
+    Collections.sort(sortedHosts);
     boolean first = true;
-    for (String host : hosts) {
+    for (String host : sortedHosts) {
       if (first) {
         first = false;
       } else {
