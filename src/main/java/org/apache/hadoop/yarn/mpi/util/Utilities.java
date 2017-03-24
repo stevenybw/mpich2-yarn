@@ -1,5 +1,6 @@
 package org.apache.hadoop.yarn.mpi.util;
 
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -370,8 +371,10 @@ public final class Utilities {
   public static String getMpiExecDir(Configuration conf, ApplicationAttemptId appAttemptID) {
     String execDir = null;
     StringBuilder mpiExecBuilder = new StringBuilder(100);
-    mpiExecBuilder.append(conf.get("hadoop.tmp.dir" , "/tmp")).append("/mpiexecs/");
+    mpiExecBuilder.append(conf.get("hadoop.tmp.dir" , "/tmp").split(",")[0]).append("/mpiexecs/");
     execDir = conf.get("mpi.local.dir", mpiExecBuilder.toString()) + appAttemptID.toString();
+    File dir_dir = new File(execDir);
+    dir_dir.mkdirs();
     return execDir;
   }
 
@@ -388,17 +391,25 @@ public final class Utilities {
     post.append("/mpidownload/").append(containerId).append("/");
     StringBuilder dir = new StringBuilder(100);
 
-    String mpiTmpDir = conf.get("hadoop.tmp.dir" , "/tmp");
+    String mpiTmpDir = conf.get("hadoop.tmp.dir" , "/tmp").split(",")[0];
     String mpiLocalDir = conf.get("mpi.local.dir", mpiTmpDir + "/mpidata");
     dir.append(mpiLocalDir).append("/").append(appAttemptID);
-    return dir.toString() + post.toString();
+
+    String download_dir_str = dir.toString() + post.toString();
+    File download_dir_dir = new File(download_dir_str);
+    download_dir_dir.mkdirs();
+
+    return download_dir_str;
 
   }
 
   public static String getApplicationDir(Configuration conf, String appAttemptID) {
     StringBuilder dir = new StringBuilder(100);
-    dir.append(conf.get("mpi.local.dir", conf.get("hadoop.tmp.dir" , "/tmp") + "/mpidata")).append("/").append(appAttemptID).append("/");
-    return dir.toString();
+    dir.append(conf.get("mpi.local.dir", conf.get("hadoop.tmp.dir" , "/tmp").split(",")[0] + "/mpidata")).append("/").append(appAttemptID).append("/");
+    String dir_str = dir.toString();
+    File dir_dir = new File(dir_str);
+    dir_dir.mkdirs();
+    return dir_str;
   }
 
   /**

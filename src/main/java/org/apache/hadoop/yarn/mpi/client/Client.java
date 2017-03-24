@@ -78,7 +78,7 @@ public class Client {
   // App master priority
   private int amPriority = 0;
   // Queue for App master
-  private String amQueue = "";
+  private String amQueue = "kylindev";
   // Amt. of memory resource to request for to run the App Master
   private int amMemory = 64;
   // Application master jar file
@@ -554,6 +554,7 @@ public class Client {
      // provided out of the box. For now setting all required classpaths
      // including
      // the classpath to "." for the application jar
+
      StringBuilder classPathEnv = new StringBuilder("${CLASSPATH}:./*");
      for (String c : conf.getStrings(
          MPIConfiguration.YARN_APPLICATION_CLASSPATH,
@@ -568,9 +569,11 @@ public class Client {
      classPathEnv.append(testRuntimeClassPath);
      env.put("CLASSPATH", classPathEnv.toString());
 
-     // TODO Add the system path into the environment, this is important,
-     // otherwise we cannot find mpiexec or smpd
-     env.put("PATH", System.getenv("PATH"));
+     env.put("LD_LIBRARY_PATH", System.getenv("LD_LIBRARY_PATH"));
+     env.put("HADOOP_CONF_DIR", System.getenv("HADOOP_CONF_DIR"));
+     env.put("HADOOP_COMMON_HOME", System.getenv("HADOOP_PREFIX"));
+     env.put("HADOOP_HDFS_HOME", System.getenv("HADOOP_PREFIX"));
+     env.put("YARN_HOME", System.getenv("HADOOP_PREFIX"));
 
      // Set the necessary command to execute the application master
      Vector<CharSequence> vargs = new Vector<CharSequence>(30);

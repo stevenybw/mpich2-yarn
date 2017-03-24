@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
+import java.util.TreeSet;
 import java.util.Vector;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -165,6 +166,7 @@ public class ApplicationMaster extends CompositeService {
       appMaster.appendMsg("Initializing ApplicationMaster");
       LOG.info("Initializing ApplicationMaster");
       if (!appMaster.parseArgs(args)) {
+        LOG.fatal("Parse Args Failed");
         System.exit(0);
       }
       result = appMaster.run();
@@ -564,11 +566,15 @@ public class ApplicationMaster extends CompositeService {
       throws IOException, NoSuchAlgorithmException {
     String keypair_name = String.valueOf(this.appAttemptID.getApplicationId()
         .getId()) + "-" + String.valueOf(this.appAttemptID.getAttemptId());
-    String tempDirAddr = conf.get("hadoop.tmp.dir");
+
+    // Assume comma (,) seperated string
+    String tempDirAddr = conf.get("hadoop.tmp.dir").split(",")[0];
+    LOG.info("tempDirAddr=" + tempDirAddr);
     File tempDir = new File(tempDirAddr);
     if (!tempDir.exists()) {
-      throw new IOException("Temporary directory at "
-          + tempDir.getAbsolutePath() + " doesn't exist.");
+      LOG.info("Temporary directory at "
+          + tempDir.getAbsolutePath() + " doesn't exist, creating.");
+      tempDir.mkdirs();
     }
     File destination = new File(tempDir, keypair_name);
     keypair_position = destination.getAbsolutePath();
@@ -649,7 +655,13 @@ public class ApplicationMaster extends CompositeService {
    * @throws NoSuchAlgorithmException
    */
   public boolean run() throws IOException, NoSuchAlgorithmException {
+    this.appendMsg("Starting ApplicationMaster");
     LOG.info("Starting ApplicationMaster");
+
+    for(String k: System.getenv().keySet()) {
+      LOG.info(k+"="+System.getenv(k));
+      this.appendMsg(k+"="+System.getenv(k));
+    }
 
     // debug_launch_mpiexec();
 
@@ -697,6 +709,7 @@ public class ApplicationMaster extends CompositeService {
       Utilities.sleep(allocateInterval);
     }
 
+    this.appendMsg(numTotalContainers + " containers allocated.");
     LOG.info(numTotalContainers + " containers allocated.");
 
     hostToProcNum = rmAsyncHandler.getHostToProcNum();
@@ -709,6 +722,16 @@ public class ApplicationMaster extends CompositeService {
     for (Container allocatedContainer : distinctContainers) {
       String host = allocatedContainer.getNodeId().getHost();
       containerHosts.add(host);
+
+      this.appendMsg("Launching command on a new container" + ", containerId="
+          + allocatedContainer.getId() + ", containerNode="
+          + allocatedContainer.getNodeId().getHost() + ":"
+          + allocatedContainer.getNodeId().getPort() + ", containerNodeURI="
+          + allocatedContainer.getNodeHttpAddress()
+          // + ", containerState" + allocatedContainer.getState()
+          + ", containerResourceMemory"
+          + allocatedContainer.getResource().getMemory());
+
       LOG.info("Launching command on a new container" + ", containerId="
           + allocatedContainer.getId() + ", containerNode="
           + allocatedContainer.getNodeId().getHost() + ":"
@@ -730,18 +753,25 @@ public class ApplicationMaster extends CompositeService {
 
     try {
       // Wait all daemons starting
-      while (!mpdListener.isAllMPDStarted()) {
-        Utilities.sleep(PULL_INTERVAL);
-      }
+      //      while (!mpdListener.isAllMPDStarted()) {
+      //        this.appendMsg("Waiting for containers...");
+      //        LOG.info("Waiting for containers...");
+      //        Utilities.sleep(PULL_INTERVAL);
+      //      }
+
+      LOG.info("user.name = " + System.getProperty("user.name"));
+      this.appendMsg("user.name = " + System.getProperty("user.name"));
+
       this.appendMsg("all containers are launched successfully, executing mpiexec...");
       LOG.info("all containers are launched successfully, executing mpiexec...");
       boolean mpiExecSuccess = launchMpiExec();
 
       LOG.info("mpiexec completed, wait for daemons doing clean-ups.");
-      mpdListener.setAmFinished();
-      while (!mpdListener.isAllMPDFinished()){
-        Utilities.sleep(PULL_INTERVAL);
-      }
+      //mpdListener.setAmFinished();
+      //while (!mpdListener.isAllMPDFinished()){
+      Utilities.sleep(PULL_INTERVAL);
+      Utilities.sleep(PULL_INTERVAL);
+      //}
       LOG.info("daemons are all finished.");
 
       // When the application completes, it should send a finish application
@@ -925,7 +955,7 @@ public class ApplicationMaster extends CompositeService {
     LOG.info("Launching mpiexec from the Application Master...");
 
     StringBuilder commandBuilder = new StringBuilder(
-        "mpiexec -launcher ssh -hosts ");
+        "/soft/mvapich2-2.2/pf/bin/mpiexec.hydra -launcher ssh -hosts ");
     Set<String> hosts = hostToProcNum.keySet();
     boolean first = true;
     for (String host : hosts) {
@@ -942,6 +972,59 @@ public class ApplicationMaster extends CompositeService {
     commandBuilder.append(" ");
     commandBuilder.append(mpiExecDir);
     commandBuilder.append("/MPIExec");
+
+    File mpiPWD = new File(mpiExecDir);
+    mpiPWD.mkdirs();
+
+    LOG.info("Copy MPI application from remote filesystem to local.");
+    Path mpiAppSrc = new Path(System.getenv(MPIConstants.MPIEXECLOCATION));
+    Path mpiAppDst = new Path(mpiExecDir + "/MPIExec");
+    LOG.info("Source path: " + mpiAppSrc.toString());
+    LOG.info("Destination path: " + mpiAppDst.toString());
+    dfs.copyToLocalFile(false, mpiAppSrc, mpiAppDst);
+    File mpiAppDstFile = new File(mpiExecDir + "/MPIExec");
+    assert (mpiAppDstFile.exists());
+    mpiAppDstFile.setExecutable(true);
+
+    Runtime rt = Runtime.getRuntime();
+
+    TreeSet<String> hosts_ordered = new TreeSet<String>(hosts);
+
+    for (String host : hosts_ordered) {
+      String command_mkdir = "ssh " + host + " mkdir -p " + mpiExecDir;
+      LOG.info("command: " + command_mkdir);
+      this.appendMsg("command: " + command_mkdir);
+      Process proc_mkdir = rt.exec(command_mkdir);
+      try {
+        proc_mkdir.waitFor();
+      } catch (InterruptedException e) {
+        // TODO Auto-generated catch block
+        e.printStackTrace();
+      }
+
+      String command_scp = "scp " + mpiExecDir + "/MPIExec" + " " + host + ":" + mpiExecDir + "/MPIExec";
+      LOG.info("command: " + command_scp);
+      this.appendMsg("command: " + command_scp);
+      Process process = rt.exec(command_scp);
+      try {
+        process.waitFor();
+      } catch (InterruptedException e) {
+        // TODO Auto-generated catch block
+        e.printStackTrace();
+      }
+
+      String command_chmod = "ssh " + host + " chmod +x " + mpiExecDir + "/MPIExec";
+      LOG.info("command: " + command_chmod);
+      this.appendMsg("command: " + command_chmod);
+      Process process_chmod = rt.exec(command_chmod);
+      try {
+        process_chmod.waitFor();
+      } catch (InterruptedException e) {
+        // TODO Auto-generated catch block
+        e.printStackTrace();
+      }
+    }
+
     if (!mpiOptions.isEmpty()) {
       commandBuilder.append(" ");
       // replace the fileName with the hdfs path
@@ -965,10 +1048,11 @@ public class ApplicationMaster extends CompositeService {
       commandBuilder.append(mpiOptions);
     }
     //TODO Here we canceled mandatory host key checking, and may have potential risk for middle-man-attack
-    String[] envs = {"PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no -i " + keypair_position};
+    //String[] envs = {"PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no -i " + keypair_position};
+    String[] envs = {"PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no"};
     LOG.info("Executing command:" + commandBuilder.toString());
-    File mpiPWD = new File(mpiExecDir);
-    Runtime rt = Runtime.getRuntime();
+    LOG.info("keypair_position=" + keypair_position);
+
     final Process pc = rt.exec(commandBuilder.toString(), envs, mpiPWD);
 
     Thread stdinThread = new Thread(new Runnable() {
@@ -1092,7 +1176,7 @@ public class ApplicationMaster extends CompositeService {
     // Set the necessary command to execute on the allocated container
     LOG.info("Setting up container command");
     Vector<CharSequence> vargs = new Vector<CharSequence>(5);
-    vargs.add("${JAVA_HOME}" + "/bin/java");
+    vargs.add("/soft/java" + "/bin/java");
     vargs.add("-Xmx" + containerMemory + "m");
     // log are specified by the nodeManager's container-log4j.properties and
     // nodemanager can specify the MPI_AM_LOG_LEVEL and MPI_AM_LOG_SIZE

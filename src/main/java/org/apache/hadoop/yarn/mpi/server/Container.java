@@ -374,7 +374,7 @@ public class Container {
       line = bufferedReader.readLine();
     }
     LOG.info("authorized_keys read successfully with " + lines.size()
-        + " entities.");
+    + " entities.");
 
     sshAuthorizedKeysOut.seek(0);
     sshAuthorizedKeysOut.setLength(0);
@@ -412,6 +412,8 @@ public class Container {
       LOG.error("Error print debug info.");
       e.printStackTrace();
     }
+
+    LOG.info("Container Started");
 
     final Container container = new Container();
     Utilities.printRelevantParams("Container", container.conf);
