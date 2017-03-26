@@ -43,13 +43,11 @@ import org.apache.hadoop.yarn.api.records.ApplicationId;
 import org.apache.hadoop.yarn.api.records.ApplicationReport;
 import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
 import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
-import org.apache.hadoop.yarn.api.records.FinalApplicationStatus;
 import org.apache.hadoop.yarn.api.records.LocalResource;
 import org.apache.hadoop.yarn.api.records.LocalResourceType;
 import org.apache.hadoop.yarn.api.records.LocalResourceVisibility;
 import org.apache.hadoop.yarn.api.records.Priority;
 import org.apache.hadoop.yarn.api.records.Resource;
-import org.apache.hadoop.yarn.api.records.YarnApplicationState;
 import org.apache.hadoop.yarn.exceptions.YarnException;
 import org.apache.hadoop.yarn.mpi.MPIConfiguration;
 import org.apache.hadoop.yarn.mpi.MPIConstants;
@@ -136,7 +134,7 @@ public class Client {
       if (client.taskType == TaskType.RUN) {
         result = client.run();
       } else if (client.taskType == TaskType.KILL) {
-        result = client.kill();
+        assert(false);
       }
     } catch (Throwable t) {
       LOG.fatal("Error running CLient", t);
@@ -574,6 +572,7 @@ public class Client {
      env.put("HADOOP_COMMON_HOME", System.getenv("HADOOP_PREFIX"));
      env.put("HADOOP_HDFS_HOME", System.getenv("HADOOP_PREFIX"));
      env.put("YARN_HOME", System.getenv("HADOOP_PREFIX"));
+     env.put("MPICH_YARN_HOSTS", System.getenv("MPICH_YARN_HOSTS"));
 
      // Set the necessary command to execute the application master
      Vector<CharSequence> vargs = new Vector<CharSequence>(30);
@@ -668,9 +667,6 @@ public class Client {
    *           , YarnException
    */
   private boolean monitorApplication() throws IOException, YarnException {
-
-    Runtime.getRuntime().addShutdownHook(
-        new KillRunningAppHook(isRunning, applicationsManager, appId));
     while (true) {
       // Get application report for the appId we are interested in
       ApplicationReport report = Utilities.getApplicationReport(appId,
@@ -689,49 +685,8 @@ public class Client {
             + report.getFinalApplicationStatus().toString()
             + ", appTrackingUrl=" + report.getTrackingUrl() + ", appUser="
             + report.getUser());
-        mpiClient = Utilities.connectToAM(conf, report.getHost(),
-            report.getRpcPort());
-      }
-
-      YarnApplicationState state = report.getYarnApplicationState();
-      FinalApplicationStatus dsStatus = report.getFinalApplicationStatus();
-      if (YarnApplicationState.FINISHED == state) {
-        mpiClient = null;
-        isRunning.set(false);
-        if (FinalApplicationStatus.SUCCEEDED == dsStatus) {
-          LOG.info("Application has completed successfully. Breaking monitoring loop");
-          return true;
-        } else {
-          LOG.info("Application did finished unsuccessfully." + " YarnState="
-              + state.toString() + ", DSFinalStatus=" + dsStatus.toString()
-              + ". Breaking monitoring loop");
-          return false;
-        }
-      } else if (YarnApplicationState.KILLED == state
-          || YarnApplicationState.FAILED == state) {
-        mpiClient = null;
-        isRunning.set(false);
-        LOG.info("Application did not finish." + " YarnState="
-            + state.toString() + ", DSFinalStatus=" + dsStatus.toString()
-            + ". Breaking monitoring loop");
-        return false;
-      }
-
-      if (System.currentTimeMillis() > (clientStartTime + clientTimeout)) {
-        mpiClient = null;
-        LOG.info("Reached client specified timeout for application. Killing application");
-        Utilities.killApplication(applicationsManager, appId);
-        isRunning.set(false);
-        return false;
-      }
-
-      if (mpiClient != null) {
-        String[] messages = mpiClient.popAllMPIMessages();
-        if (messages != null && messages.length > 0) {
-          for (String message : messages) {
-            LOG.info(message);
-          }
-        }
+      } else {
+        break;
       }
 
       // pulling log interval,the default is 1000ms
@@ -739,6 +694,7 @@ public class Client {
           1000);
       Utilities.sleep(logInterval);
     } // end while
+    return true;
   }
 
   /**
@@ -803,28 +759,6 @@ public class Client {
           + e.getMessage());
     }
     return envClassPath;
-  }
-
-  /**
-   * Kill the command-line specified appId
-   *
-   * @return
-   */
-  public boolean kill() {
-    try {
-      applicationsManager = Utilities.connectToASM(conf);
-      ApplicationId appId = parseAppId(appIdToKill);
-      if (null == appId)
-        return false;
-      Utilities.killApplication(applicationsManager, appId);
-    } catch (YarnException e) {
-      LOG.error("Killing " + appIdToKill + " failed", e);
-      return false;
-    } catch (IOException e) {
-      LOG.error("Connecting RM to kill " + appIdToKill + " failed", e);
-      return false;
-    }
-    return true;
   }
 
   private static ApplicationId parseAppId(String appIdStr) {

@@ -8,7 +8,6 @@ import java.net.URISyntaxException;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collection;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -16,7 +15,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.Vector;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -523,12 +521,6 @@ public class ApplicationMaster extends CompositeService {
     nmClientAsync.init(conf);
     nmClientAsync.start();
 
-    LOG.info("Initializing MPDProtocal's RPC services...");
-    mpdListener = new MPDListenerImpl();
-    mpdListener.init(conf);
-    LOG.info("Starting MPDProtocal's RPC services...");
-    mpdListener.start();
-
     LOG.info("Initiallizing MPIClient service and WebApp...");
     clientService = new MPIClientService(appContext);
     clientService.init(conf);
@@ -538,9 +530,6 @@ public class ApplicationMaster extends CompositeService {
     appMasterTrackingUrl = appMasterHostname + ":"
         + clientService.getHttpPort();
     LOG.info("Application Master tracking url is " + appMasterTrackingUrl);
-
-    amPublicKey = generateKeyPairAndLoadPublicKey();
-    LOG.info("Generated public key: "+amPublicKey);
   }
 
   private String keypair_position;
@@ -692,74 +681,10 @@ public class ApplicationMaster extends CompositeService {
       e.printStackTrace();
     }
 
-    rmAsyncHandler.setNeededContainersCount(numTotalContainers);
-
-    for (int i = 0; i < numTotalContainers; i++) {
-      ContainerRequest req = setupContainerAskForRM();
-      rmClientAsync.addContainerRequest(req);
-    }
-
-    int allocateInterval = conf.getInt(MPIConfiguration.MPI_ALLOCATE_INTERVAL,
-        1000);
-    rmClientAsync.setHeartbeatInterval(allocateInterval);
-
-    LOG.info("Try to allocate " + numTotalContainers
-        + " containers with heartbeat interval = " + allocateInterval + " ms.");
-
-    while (rmAsyncHandler.getAllocatedContainerNumber() < numTotalContainers) {
-      Utilities.sleep(allocateInterval);
-    }
-
-    this.appendMsg(numTotalContainers + " containers allocated.");
-    LOG.info(numTotalContainers + " containers allocated.");
-
-    hostToProcNum = rmAsyncHandler.getHostToProcNum();
-    distinctContainers = rmAsyncHandler.getDistinctContainers();
-
-    // key(Integer) represent the containerID;value(List<FileSplit>) represent
-    // the files which need to be downloaded
-    ConcurrentHashMap<Integer, List<FileSplit>> splits = getFileSplit(
-        fileDownloads, fileToLocation, distinctContainers);
-    for (Container allocatedContainer : distinctContainers) {
-      String host = allocatedContainer.getNodeId().getHost();
-      containerHosts.add(host);
-
-      this.appendMsg("Launching command on a new container" + ", containerId="
-          + allocatedContainer.getId() + ", containerNode="
-          + allocatedContainer.getNodeId().getHost() + ":"
-          + allocatedContainer.getNodeId().getPort() + ", containerNodeURI="
-          + allocatedContainer.getNodeHttpAddress()
-          // + ", containerState" + allocatedContainer.getState()
-          + ", containerResourceMemory"
-          + allocatedContainer.getResource().getMemory());
-
-      LOG.info("Launching command on a new container" + ", containerId="
-          + allocatedContainer.getId() + ", containerNode="
-          + allocatedContainer.getNodeId().getHost() + ":"
-          + allocatedContainer.getNodeId().getPort() + ", containerNodeURI="
-          + allocatedContainer.getNodeHttpAddress()
-          // + ", containerState" + allocatedContainer.getState()
-          + ", containerResourceMemory"
-          + allocatedContainer.getResource().getMemory());
-
-      Boolean result = launchContainerAsync(allocatedContainer,
-          splits.get(Integer.valueOf(allocatedContainer.getId().getId())),
-          resultToDestination.values());
-
-      mpdListener.addContainer(new ContainerId(allocatedContainer.getId()));
-    }
-
     boolean isSuccess = true;
     String diagnostics = null;
 
     try {
-      // Wait all daemons starting
-      //      while (!mpdListener.isAllMPDStarted()) {
-      //        this.appendMsg("Waiting for containers...");
-      //        LOG.info("Waiting for containers...");
-      //        Utilities.sleep(PULL_INTERVAL);
-      //      }
-
       LOG.info("user.name = " + System.getProperty("user.name"));
       this.appendMsg("user.name = " + System.getProperty("user.name"));
 
@@ -768,11 +693,6 @@ public class ApplicationMaster extends CompositeService {
       boolean mpiExecSuccess = launchMpiExec();
 
       LOG.info("mpiexec completed, wait for daemons doing clean-ups.");
-      //mpdListener.setAmFinished();
-      //while (!mpdListener.isAllMPDFinished()){
-      Utilities.sleep(PULL_INTERVAL);
-      Utilities.sleep(PULL_INTERVAL);
-      //}
       LOG.info("daemons are all finished.");
 
       // When the application completes, it should send a finish application
@@ -954,12 +874,21 @@ public class ApplicationMaster extends CompositeService {
    */
   private boolean launchMpiExec() throws IOException {
     LOG.info("Launching mpiexec from the Application Master...");
-
+    String hosts_env = System.getenv("MPICH_YARN_HOSTS");
+    List<String> sortedHosts = new ArrayList<String>();
+    LOG.info("MPICH_YARN_HOSTS=" + hosts_env);
+    HashMap<String, Integer> hostToProcNum = new HashMap<String, Integer>();
+    hostToProcNum.clear();
+    for (String host : hosts_env.split(",")) {
+      String[] sp = host.split(":");
+      String hostname = sp[0];
+      String number = sp[1];
+      LOG.info(hostname+"="+number);
+      hostToProcNum.put(hostname, Integer.valueOf(number));
+      sortedHosts.add(hostname);
+    };
     StringBuilder commandBuilder = new StringBuilder(
         "/soft/mvapich2-2.2/pf/bin/mpiexec.hydra -launcher ssh -hosts ");
-    Set<String> hosts = hostToProcNum.keySet();
-    List<String> sortedHosts = new ArrayList<String>(hosts);
-    Collections.sort(sortedHosts);
     boolean first = true;
     for (String host : sortedHosts) {
       if (first) {
@@ -991,9 +920,7 @@ public class ApplicationMaster extends CompositeService {
 
     Runtime rt = Runtime.getRuntime();
 
-    TreeSet<String> hosts_ordered = new TreeSet<String>(hosts);
-
-    for (String host : hosts_ordered) {
+    for (String host : sortedHosts) {
       String command_mkdir = "ssh " + host + " mkdir -p " + mpiExecDir;
       LOG.info("command: " + command_mkdir);
       this.appendMsg("command: " + command_mkdir);
@@ -1037,14 +964,6 @@ public class ApplicationMaster extends CompositeService {
         String fileName = itNames.next();
         mpiOptions = mpiOptions.replaceAll(fileName,
             this.fileToDestination.get(fileName));
-      }
-      // replace the result with container local location
-      Set<String> resultNames = resultToDestination.keySet();
-      Iterator<String> itResult = resultNames.iterator();
-      while (itResult.hasNext()) {
-        String resultName = itResult.next();
-        mpiOptions = mpiOptions.replaceAll(resultName,
-            resultToDestination.get(resultName).getContainerLocal());
       }
       LOG.info(String.format("mpi options:", mpiOptions));
 
