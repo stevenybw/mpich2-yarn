@@ -1052,7 +1052,7 @@ public class ApplicationMaster extends CompositeService {
     }
     //TODO Here we canceled mandatory host key checking, and may have potential risk for middle-man-attack
     //String[] envs = {"PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no -i " + keypair_position};
-    String[] envs = {"PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no"};
+    String[] envs = {"MV2_ENABLE_AFFINITY=0", "PATH="+System.getenv("PATH"), "HYDRA_LAUNCHER_EXTRA_ARGS=-o StrictHostKeyChecking=no"};
     LOG.info("Executing command:" + commandBuilder.toString());
     LOG.info("keypair_position=" + keypair_position);
 
